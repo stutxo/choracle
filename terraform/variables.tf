@@ -45,13 +45,13 @@ variable "repo_url" {
 }
 
 variable "repo_ref" {
-  description = "Git branch, tag, or commit checked out by the EC2 bootstrap."
+  description = "Git branch, tag, or commit checked out by the EC2 bootstrap. Use a commit for reproducible PCRs."
   type        = string
   default     = "main"
 }
 
 variable "nitriding_commit" {
-  description = "nitriding-daemon commit baked into the enclave image."
+  description = "Deprecated; nitriding-daemon is pinned by flake.nix."
   type        = string
   default     = "2b7dfefaee56819681b7f5a4ee8d66a417ad457d"
 }

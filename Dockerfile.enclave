@@ -3,7 +3,7 @@ FROM rust:1.92-bookworm AS rust-build
 WORKDIR /src
 COPY Cargo.toml Cargo.lock ./
 COPY src ./src
-RUN cargo build --release --bin enclave-prover --bin verify-proof
+RUN cargo build --release --bin enclave-prover --bin verify-proof --bin choracle-runtime-config
 
 FROM golang:1.24-bookworm AS nitriding-build
 
@@ -24,8 +24,6 @@ RUN make ARCH="$NITRIDING_ARCH" nitriding
 
 FROM debian:bookworm-slim
 
-ARG PROOF_FQDN
-ENV PROOF_FQDN=${PROOF_FQDN}
 ENV PROOF_HTTP_LISTEN=127.0.0.1:8081
 
 RUN apt-get update \
@@ -34,6 +32,7 @@ RUN apt-get update \
 
 COPY --from=rust-build /src/target/release/enclave-prover /usr/local/bin/enclave-prover
 COPY --from=rust-build /src/target/release/verify-proof /usr/local/bin/verify-proof
+COPY --from=rust-build /src/target/release/choracle-runtime-config /usr/local/bin/choracle-runtime-config
 COPY --from=nitriding-build /src/nitriding-daemon/nitriding /usr/local/bin/nitriding
 COPY deploy/enclave-entrypoint.sh /usr/local/bin/enclave-entrypoint.sh
 RUN chmod 0755 /usr/local/bin/enclave-entrypoint.sh

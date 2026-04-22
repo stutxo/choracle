@@ -14,18 +14,20 @@ Enclave-enabled EC2 parent instance.
 
 The parent instance bootstraps itself with cloud-init:
 
-1. Installs Docker, Nitro CLI, Go, Git, jq, and build tools.
+1. Installs Docker, Nitro CLI, Nix, Go, Git, jq, and build tools.
 2. Builds `gvproxy`.
 3. Clones the configured public Git repository/ref.
-4. Builds the enclave Docker image and EIF.
-5. Writes PCR measurements under `/opt/choracle/build`.
-6. Starts `gvproxy`, exposes parent port 443 to nitriding, and runs the enclave.
+4. Builds the reproducible Nix OCI image and EIF.
+5. Writes PCR measurements and a release manifest under `/opt/choracle/build`.
+6. Starts `gvproxy`, serves the runtime FQDN over vsock, exposes parent port 443
+   to nitriding, and runs the enclave.
 
 ## Requirements
 
 - AWS credentials for Terraform.
 - A public DNS name for the proof service, for example `proof.example.com`.
-- A public Git repository URL/ref that the EC2 parent can clone.
+- A public Git repository URL/ref that the EC2 parent can clone. Use a commit
+  hash for reproducible PCRs.
 - Route53 hosted zone ID if Terraform should manage the DNS record.
 
 If `route53_zone_id` is omitted, create the DNS record manually after apply:
@@ -47,7 +49,7 @@ Example:
 proof_fqdn      = "proof.example.com"
 route53_zone_id = "Z0123456789ABCDEFG"
 repo_url        = "https://github.com/stutxo/choracle.git"
-repo_ref        = "main"
+repo_ref        = "<commit-sha>"
 ```
 
 ## Deploy
@@ -57,8 +59,8 @@ terraform init
 terraform apply
 ```
 
-The first boot can take several minutes because the instance builds `gvproxy`,
-the enclave image, and the EIF.
+The first boot can take several minutes because the instance installs Nix,
+builds `gvproxy`, builds the enclave image, and creates the EIF.
 
 ## Outputs
 
@@ -68,6 +70,7 @@ terraform output -raw parent_public_ip
 terraform output -raw parent_instance_id
 terraform output -raw ssm_session_command
 terraform output -raw pcrs_command
+terraform output -raw release_manifest_command
 ```
 
 The PCR command prints an AWS SSM command. Run that command, then inspect the
@@ -77,6 +80,12 @@ The parent also writes PCRs to:
 
 ```text
 /opt/choracle/build/auth-price.pcrs.txt
+```
+
+The reproducible build manifest is written to:
+
+```text
+/opt/choracle/build/release-manifest.json
 ```
 
 ## Test
@@ -124,6 +133,7 @@ Services on the parent:
 systemctl status gvproxy.service
 systemctl status choracle-build-eif.service
 systemctl status choracle-expose-nitriding.service
+systemctl status choracle-fqdn-config.service
 systemctl status choracle-enclave.service
 ```
 
@@ -132,4 +142,3 @@ Bootstrap log:
 ```sh
 tail -n 200 /var/log/choracle-bootstrap.log
 ```
-

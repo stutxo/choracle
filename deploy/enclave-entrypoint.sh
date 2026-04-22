@@ -1,10 +1,14 @@
 #!/bin/sh
 set -eu
 
-if [ -z "${PROOF_FQDN:-}" ]; then
-  echo "PROOF_FQDN must be set at image build time" >&2
-  exit 1
-fi
+PROOF_FQDN="$(
+  /usr/local/bin/choracle-runtime-config fetch-fqdn \
+    --cid "${CHORACLE_PARENT_CID:-3}" \
+    --port "${CHORACLE_FQDN_CONFIG_PORT:-11001}" \
+    --retries "${CHORACLE_FQDN_CONFIG_RETRIES:-60}" \
+    --retry-delay-millis "${CHORACLE_FQDN_CONFIG_RETRY_DELAY_MILLIS:-1000}"
+)"
+export PROOF_FQDN
 
 exec /usr/local/bin/nitriding \
   -fqdn "$PROOF_FQDN" \

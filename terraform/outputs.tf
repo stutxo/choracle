@@ -27,3 +27,8 @@ output "pcrs_command" {
   description = "SSM command to print the EIF build output containing PCR0/PCR1/PCR2."
   value       = "aws ssm send-command --region ${var.region} --instance-ids ${aws_instance.parent.id} --document-name AWS-RunShellScript --parameters commands='[\"cat /opt/choracle/build/auth-price.pcrs.txt\"]'"
 }
+
+output "release_manifest_command" {
+  description = "SSM command to print the Choracle reproducible build release manifest."
+  value       = "aws ssm send-command --region ${var.region} --instance-ids ${aws_instance.parent.id} --document-name AWS-RunShellScript --parameters commands='[\"cat /opt/choracle/build/release-manifest.json\"]'"
+}

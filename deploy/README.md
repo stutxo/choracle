@@ -5,23 +5,19 @@ the lower-level commands used by that deployment.
 
 ## Build Enclave Image
 
-Set DNS for the proof FQDN before building. `nitriding` uses ACME, and the FQDN
-is baked into the EIF, so changing it changes PCRs.
+The canonical release build is Nix-based. The proof FQDN is runtime config from
+the parent instance and is not baked into the EIF.
 
 ```sh
-docker build \
-  -f Dockerfile.enclave \
-  -t choracle-enclave:latest \
-  --build-arg PROOF_FQDN=proof.example.com \
-  --build-arg NITRIDING_COMMIT=2b7dfefaee56819681b7f5a4ee8d66a417ad457d \
-  .
-
-nitro-cli build-enclave \
-  --docker-uri choracle-enclave:latest \
-  --output-file choracle.eif
+BUILD_DIR=/tmp/choracle-build \
+  deploy/build-reproducible-eif.sh
 ```
 
-Record PCR0, PCR1, and PCR2 from the `nitro-cli build-enclave` output.
+Record PCR0, PCR1, and PCR2 from `release-manifest.json` or
+`measurements.json`.
+
+The older `Dockerfile.enclave` path is retained for development only. It uses
+mutable distro/package inputs and should not be used for published PCRs.
 
 ## Start Parent Networking
 
@@ -38,6 +34,12 @@ bash deploy/expose-nitriding.sh
 ```
 
 ## Run Enclave
+
+The enclave expects a parent-side FQDN config server on vsock port `11001`:
+
+```sh
+choracle-runtime-config serve-fqdn --fqdn proof.example.com --port 11001
+```
 
 ```sh
 nitro-cli run-enclave \
@@ -58,4 +60,3 @@ Nitriding's attestation endpoint remains available:
 ```text
 GET /enclave/attestation?nonce=<40 hex chars>
 ```
-

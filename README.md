@@ -10,8 +10,9 @@ public HTTPS inside the enclave and exposes Nitro attestation.
   candles, builds a proof bundle, and binds the bundle to a Nitro
   attestation document.
 - `verify-proof`: offline verifier for proof bundles.
-- `Dockerfile.enclave`: enclave image with `nitriding`, `enclave-prover`, and
-  `verify-proof`.
+- `flake.nix`: canonical reproducible enclave OCI image build.
+- `Dockerfile.enclave`: legacy development image path; it is not the
+  reproducible release build.
 - `terraform/`: one-instance AWS deployment for a public HTTPS proof endpoint.
 - `deploy/`: lower-level manual deployment scripts.
 
@@ -73,6 +74,32 @@ deployment. The deployment requires:
 
 Real Nitro attestation requires a non-debug Nitro Enclave. Debug-mode
 attestations produce all-zero PCRs and are rejected by the verifier.
+
+## Reproducible Builds
+
+The release build is the Nix-built OCI image:
+
+```sh
+nix build .#choracle-enclave-oci-aarch64
+```
+
+On a Nitro-capable Linux builder, create the EIF and release manifest with:
+
+```sh
+BUILD_DIR=/tmp/choracle-build \
+  deploy/build-reproducible-eif.sh
+```
+
+This writes:
+
+- `choracle-enclave-image.tar`
+- `choracle.eif`
+- `measurements.json`
+- `release-manifest.json`
+
+The public proof FQDN is not baked into the measured image. At runtime the
+enclave entrypoint fetches the FQDN from the parent instance over Nitro vsock,
+then starts `nitriding`.
 
 ## Verification
 

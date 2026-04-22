@@ -1,0 +1,140 @@
+{
+  description = "Reproducible Choracle Nitro Enclave image";
+
+  inputs = {
+    nixpkgs.url = "github:NixOS/nixpkgs/nixos-25.11";
+    nitridingDaemon = {
+      url = "github:brave/nitriding-daemon/2b7dfefaee56819681b7f5a4ee8d66a417ad457d";
+      flake = false;
+    };
+  };
+
+  outputs =
+    {
+      self,
+      nixpkgs,
+      nitridingDaemon,
+    }:
+    let
+      lib = nixpkgs.lib;
+      systems = [ "aarch64-linux" ];
+      forAllSystems = f: lib.genAttrs systems (system: f (import nixpkgs { inherit system; }));
+    in
+    {
+      packages = forAllSystems (
+        pkgs:
+        let
+          pname = "coinbase-candle-prover";
+          version = "0.1.0";
+
+          source = lib.cleanSourceWith {
+            src = ./.;
+            filter =
+              path: type:
+              let
+                name = baseNameOf path;
+              in
+              !(
+                name == ".git"
+                || name == "target"
+                || name == "result"
+                || lib.hasSuffix ".eif" name
+              );
+          };
+
+          choracle = pkgs.rustPlatform.buildRustPackage {
+            inherit pname version;
+            src = source;
+            cargoLock.lockFile = ./Cargo.lock;
+            cargoBuildFlags = [
+              "--bin"
+              "enclave-prover"
+              "--bin"
+              "verify-proof"
+              "--bin"
+              "choracle-runtime-config"
+            ];
+            doCheck = false;
+          };
+
+          nitriding = pkgs.buildGoModule {
+            pname = "nitriding";
+            version = "2b7dfefaee56819681b7f5a4ee8d66a417ad457d";
+            src = nitridingDaemon;
+
+            # Refresh with:
+            #   nix build .#nitriding
+            # and replace this fake hash with the hash Nix reports.
+            vendorHash = lib.fakeHash;
+
+            postPatch = ''
+              awk '{ print } index($0, "e.extPubSrv.TLSConfig = certManager.TLSConfig()") { print "    e.extPrivSrv.TLSConfig = e.extPubSrv.TLSConfig.Clone()" }' enclave.go > enclave.go.new
+              mv enclave.go.new enclave.go
+              awk 'seen && /e.extPrivSrv.TLSConfig = e.extPubSrv.TLSConfig.Clone()/ { ok = 1 } /e.extPubSrv.TLSConfig = certManager.TLSConfig\(\)/ { seen = 1 } END { exit ok ? 0 : 1 }' enclave.go
+            '';
+
+            subPackages = [ "." ];
+            CGO_ENABLED = "0";
+            GOFLAGS = "-trimpath -buildvcs=false";
+            ldflags = [
+              "-s"
+              "-w"
+            ];
+          };
+
+          enclaveRoot = pkgs.runCommand "choracle-enclave-root" { } ''
+            mkdir -p "$out/usr/local/bin"
+            install -m 0755 ${choracle}/bin/enclave-prover "$out/usr/local/bin/enclave-prover"
+            install -m 0755 ${choracle}/bin/verify-proof "$out/usr/local/bin/verify-proof"
+            install -m 0755 ${choracle}/bin/choracle-runtime-config "$out/usr/local/bin/choracle-runtime-config"
+            install -m 0755 ${nitriding}/bin/nitriding "$out/usr/local/bin/nitriding"
+            install -m 0755 ${./deploy/enclave-entrypoint.sh} "$out/usr/local/bin/enclave-entrypoint.sh"
+          '';
+
+          imageRoot = pkgs.buildEnv {
+            name = "choracle-enclave-image-root";
+            paths = [
+              enclaveRoot
+              pkgs.busybox
+              pkgs.cacert
+            ];
+            pathsToLink = [
+              "/bin"
+              "/etc"
+              "/usr/local/bin"
+            ];
+          };
+        in
+        {
+          inherit choracle nitriding;
+
+          choracle-tools-aarch64 = choracle;
+
+          choracle-enclave-oci-aarch64 = pkgs.dockerTools.buildLayeredImage {
+            name = "choracle-enclave";
+            tag = "reproducible";
+            architecture = "arm64";
+            created = "1970-01-01T00:00:01Z";
+            copyToRoot = imageRoot;
+            config = {
+              Entrypoint = [ "/usr/local/bin/enclave-entrypoint.sh" ];
+              Env = [
+                "SSL_CERT_FILE=/etc/ssl/certs/ca-bundle.crt"
+                "PROOF_HTTP_LISTEN=127.0.0.1:8081"
+                "CHORACLE_PARENT_CID=3"
+                "CHORACLE_FQDN_CONFIG_PORT=11001"
+              ];
+            };
+          };
+
+          default = self.packages.${pkgs.system}.choracle-enclave-oci-aarch64;
+        }
+      );
+
+      checks = forAllSystems (pkgs: {
+        choracle = self.packages.${pkgs.system}.choracle;
+        nitriding = self.packages.${pkgs.system}.nitriding;
+        enclave-image = self.packages.${pkgs.system}.choracle-enclave-oci-aarch64;
+      });
+    };
+}

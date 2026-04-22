@@ -299,6 +299,7 @@ dependencies = [
  "hex",
  "httparse",
  "httpdate",
+ "libc",
  "nitro_attest",
  "rand_core",
  "rustls",

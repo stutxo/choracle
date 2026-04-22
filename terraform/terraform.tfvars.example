@@ -8,4 +8,4 @@ route53_zone_id = "Z0123456789ABCDEFG"
 
 # The EC2 bootstrap clones this public repo/ref.
 repo_url = "https://github.com/stutxo/choracle.git"
-repo_ref = "main"
+repo_ref = "<commit-sha>"
