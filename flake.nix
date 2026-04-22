@@ -3,6 +3,10 @@
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-25.11";
+    rust-overlay = {
+      url = "github:oxalica/rust-overlay";
+      inputs.nixpkgs.follows = "nixpkgs";
+    };
     nitridingDaemon = {
       url = "github:brave/nitriding-daemon/2b7dfefaee56819681b7f5a4ee8d66a417ad457d";
       flake = false;
@@ -13,12 +17,23 @@
     {
       self,
       nixpkgs,
+      rust-overlay,
       nitridingDaemon,
     }:
     let
       lib = nixpkgs.lib;
       systems = [ "aarch64-linux" ];
-      forAllSystems = f: lib.genAttrs systems (system: f (import nixpkgs { inherit system; }));
+      forAllSystems =
+        f:
+        lib.genAttrs systems (
+          system:
+          f (
+            import nixpkgs {
+              inherit system;
+              overlays = [ rust-overlay.overlays.default ];
+            }
+          )
+        );
     in
     {
       packages = forAllSystems (
@@ -26,6 +41,11 @@
         let
           pname = "coinbase-candle-prover";
           version = "0.1.0";
+          rustToolchain = pkgs.rust-bin.stable."1.92.0".minimal;
+          rustPlatform = pkgs.makeRustPlatform {
+            cargo = rustToolchain;
+            rustc = rustToolchain;
+          };
 
           source = lib.cleanSourceWith {
             src = ./.;
@@ -42,7 +62,7 @@
               );
           };
 
-          choracle = pkgs.rustPlatform.buildRustPackage {
+          choracle = rustPlatform.buildRustPackage {
             inherit pname version;
             src = source;
             cargoLock.lockFile = ./Cargo.lock;
@@ -65,7 +85,7 @@
             # Refresh with:
             #   nix build .#nitriding
             # and replace this fake hash with the hash Nix reports.
-            vendorHash = lib.fakeHash;
+            vendorHash = "sha256-cVlPSXcn44X3Lusq1gmlPY+b0k8Vd1uKZVIwxYQbMgM=";
 
             postPatch = ''
               awk '{ print } index($0, "e.extPubSrv.TLSConfig = certManager.TLSConfig()") { print "    e.extPrivSrv.TLSConfig = e.extPubSrv.TLSConfig.Clone()" }' enclave.go > enclave.go.new
@@ -74,12 +94,15 @@
             '';
 
             subPackages = [ "." ];
-            CGO_ENABLED = "0";
-            GOFLAGS = "-trimpath -buildvcs=false";
+            preBuild = "export CGO_ENABLED=0";
+            GOFLAGS = [
+              "-buildvcs=false"
+            ];
             ldflags = [
               "-s"
               "-w"
             ];
+            doCheck = false;
           };
 
           enclaveRoot = pkgs.runCommand "choracle-enclave-root" { } ''
@@ -87,7 +110,7 @@
             install -m 0755 ${choracle}/bin/enclave-prover "$out/usr/local/bin/enclave-prover"
             install -m 0755 ${choracle}/bin/verify-proof "$out/usr/local/bin/verify-proof"
             install -m 0755 ${choracle}/bin/choracle-runtime-config "$out/usr/local/bin/choracle-runtime-config"
-            install -m 0755 ${nitriding}/bin/nitriding "$out/usr/local/bin/nitriding"
+            install -m 0755 ${nitriding}/bin/nitriding-daemon "$out/usr/local/bin/nitriding"
             install -m 0755 ${./deploy/enclave-entrypoint.sh} "$out/usr/local/bin/enclave-entrypoint.sh"
           '';
 
@@ -115,7 +138,7 @@
             tag = "reproducible";
             architecture = "arm64";
             created = "1970-01-01T00:00:01Z";
-            copyToRoot = imageRoot;
+            contents = [ imageRoot ];
             config = {
               Entrypoint = [ "/usr/local/bin/enclave-entrypoint.sh" ];
               Env = [
@@ -127,14 +150,14 @@
             };
           };
 
-          default = self.packages.${pkgs.system}.choracle-enclave-oci-aarch64;
+          default = self.packages.${pkgs.stdenv.hostPlatform.system}.choracle-enclave-oci-aarch64;
         }
       );
 
       checks = forAllSystems (pkgs: {
-        choracle = self.packages.${pkgs.system}.choracle;
-        nitriding = self.packages.${pkgs.system}.nitriding;
-        enclave-image = self.packages.${pkgs.system}.choracle-enclave-oci-aarch64;
+        choracle = self.packages.${pkgs.stdenv.hostPlatform.system}.choracle;
+        nitriding = self.packages.${pkgs.stdenv.hostPlatform.system}.nitriding;
+        enclave-image = self.packages.${pkgs.stdenv.hostPlatform.system}.choracle-enclave-oci-aarch64;
       });
     };
 }

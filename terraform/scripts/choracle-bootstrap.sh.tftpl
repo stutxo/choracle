@@ -55,15 +55,15 @@ systemctl enable --now nitro-enclaves-allocator.service
 
 if ! command -v nix >/dev/null 2>&1; then
   curl --silent --show-error --location https://nixos.org/nix/install -o /tmp/nix-install.sh
-  sh /tmp/nix-install.sh --no-daemon
+  HOME=/root sh /tmp/nix-install.sh --daemon --yes
 fi
 
-if [ -f /root/.nix-profile/etc/profile.d/nix.sh ]; then
-  # shellcheck disable=SC1091
-  . /root/.nix-profile/etc/profile.d/nix.sh
-elif [ -f /nix/var/nix/profiles/default/etc/profile.d/nix-daemon.sh ]; then
+if [ -f /nix/var/nix/profiles/default/etc/profile.d/nix-daemon.sh ]; then
   # shellcheck disable=SC1091
   . /nix/var/nix/profiles/default/etc/profile.d/nix-daemon.sh
+elif [ -f /root/.nix-profile/etc/profile.d/nix.sh ]; then
+  # shellcheck disable=SC1091
+  . /root/.nix-profile/etc/profile.d/nix.sh
 fi
 
 mkdir -p /root/.config/nix /etc/choracle
@@ -106,12 +106,12 @@ else
   git -C "$PROJECT_DIR" checkout --detach "$REPO_REF"
 fi
 
-if [ -f /root/.nix-profile/etc/profile.d/nix.sh ]; then
-  # shellcheck disable=SC1091
-  . /root/.nix-profile/etc/profile.d/nix.sh
-elif [ -f /nix/var/nix/profiles/default/etc/profile.d/nix-daemon.sh ]; then
+if [ -f /nix/var/nix/profiles/default/etc/profile.d/nix-daemon.sh ]; then
   # shellcheck disable=SC1091
   . /nix/var/nix/profiles/default/etc/profile.d/nix-daemon.sh
+elif [ -f /root/.nix-profile/etc/profile.d/nix.sh ]; then
+  # shellcheck disable=SC1091
+  . /root/.nix-profile/etc/profile.d/nix.sh
 fi
 
 BUILD_DIR="$BUILD_DIR" \
