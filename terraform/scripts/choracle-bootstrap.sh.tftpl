@@ -256,7 +256,7 @@ Requires=choracle-build-eif.service
 [Service]
 Type=simple
 EnvironmentFile=/etc/choracle/runtime-config.env
-ExecStart=/usr/local/bin/choracle-runtime-config serve-fqdn --fqdn ${PROOF_FQDN} --port ${CHORACLE_FQDN_CONFIG_PORT}
+ExecStart=/usr/local/bin/choracle-runtime-config serve-fqdn --fqdn $${PROOF_FQDN} --port $${CHORACLE_FQDN_CONFIG_PORT}
 Restart=always
 RestartSec=2
 
