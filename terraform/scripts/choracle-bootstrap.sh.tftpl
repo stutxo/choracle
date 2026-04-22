@@ -1,0 +1,250 @@
+#!/bin/bash
+set -euxo pipefail
+exec > >(tee /var/log/choracle-bootstrap.log | logger -t choracle-bootstrap -s 2>/dev/console) 2>&1
+
+AWS_DEFAULT_REGION='${region}'
+ENCLAVE_CPU_COUNT='${enclave_cpu_count}'
+ENCLAVE_MEMORY_MIB='${enclave_memory_mib}'
+ENCLAVE_NAME='${enclave_name}'
+GVPROXY_REF='${gvproxy_ref}'
+IMAGE_TAG='${name}-enclave:latest'
+NITRIDING_COMMIT='${nitriding_commit}'
+PROJECT_DIR='/opt/choracle/src'
+BUILD_DIR='/opt/choracle/build'
+PROOF_FQDN='${proof_fqdn}'
+REPO_REF='${repo_ref}'
+REPO_URL='${repo_url}'
+
+export AWS_DEFAULT_REGION
+export GOCACHE=/root/.cache/go-build
+export GOMODCACHE=/root/go/pkg/mod
+export HOME=/root
+
+dnf update -y
+dnf install -y \
+  aws-nitro-enclaves-cli \
+  aws-nitro-enclaves-cli-devel \
+  ca-certificates \
+  curl-minimal \
+  docker \
+  git \
+  golang \
+  iproute \
+  jq \
+  make
+
+for user in ec2-user ssm-user; do
+  id "$user" >/dev/null 2>&1 || continue
+  usermod -aG ne "$user" || true
+  usermod -aG docker "$user" || true
+done
+
+mkdir -p "$BUILD_DIR" /opt/gvproxy /run/choracle
+mkdir -p "$GOCACHE" "$GOMODCACHE"
+
+cat >/etc/nitro_enclaves/allocator.yaml <<EOF
+---
+# Enclave configuration file.
+memory_mib: $ENCLAVE_MEMORY_MIB
+cpu_count: $ENCLAVE_CPU_COUNT
+EOF
+
+systemctl enable --now docker
+systemctl enable --now nitro-enclaves-allocator.service
+
+if [ ! -x /usr/local/bin/gvproxy ]; then
+  rm -rf /opt/gvproxy/gvisor-tap-vsock
+  git clone --depth 1 --branch "$GVPROXY_REF" https://github.com/containers/gvisor-tap-vsock.git /opt/gvproxy/gvisor-tap-vsock
+  (cd /opt/gvproxy/gvisor-tap-vsock && go build -o /usr/local/bin/gvproxy ./cmd/gvproxy)
+fi
+
+cat >/usr/local/bin/choracle-build-eif.sh <<'EOF'
+#!/bin/bash
+set -euxo pipefail
+
+BUILD_DIR='/opt/choracle/build'
+EIF_PATH="$BUILD_DIR/auth-price.eif"
+IMAGE_TAG='${name}-enclave:latest'
+NITRIDING_COMMIT='${nitriding_commit}'
+PROJECT_DIR='/opt/choracle/src'
+PROOF_FQDN='${proof_fqdn}'
+REPO_REF='${repo_ref}'
+REPO_URL='${repo_url}'
+
+export HOME=/root
+export NITRO_CLI_ARTIFACTS=/root
+export NITRO_CLI_BLOBS=/usr/share/nitro_enclaves/blobs
+
+mkdir -p "$BUILD_DIR"
+
+if [ ! -d "$PROJECT_DIR/.git" ]; then
+  rm -rf "$PROJECT_DIR"
+  git clone "$REPO_URL" "$PROJECT_DIR"
+fi
+
+git -C "$PROJECT_DIR" fetch --all --tags
+if git -C "$PROJECT_DIR" rev-parse --verify --quiet "origin/$REPO_REF" >/dev/null; then
+  git -C "$PROJECT_DIR" checkout -B "$REPO_REF" "origin/$REPO_REF"
+else
+  git -C "$PROJECT_DIR" checkout --detach "$REPO_REF"
+fi
+
+docker build \
+  -f "$PROJECT_DIR/Dockerfile.enclave" \
+  -t "$IMAGE_TAG" \
+  --build-arg "PROOF_FQDN=$PROOF_FQDN" \
+  --build-arg "NITRIDING_COMMIT=$NITRIDING_COMMIT" \
+  "$PROJECT_DIR"
+
+nitro-cli build-enclave \
+  --docker-uri "$IMAGE_TAG" \
+  --output-file "$EIF_PATH" \
+  | tee "$BUILD_DIR/auth-price.measurements.log"
+
+sed -n '/^{/,$p' "$BUILD_DIR/auth-price.measurements.log" > "$BUILD_DIR/auth-price.measurements.json"
+jq -r '.Measurements | to_entries[] | "\(.key)=\(.value)"' \
+  "$BUILD_DIR/auth-price.measurements.json" \
+  > "$BUILD_DIR/auth-price.pcrs.txt"
+
+test -s "$EIF_PATH"
+test -s "$BUILD_DIR/auth-price.pcrs.txt"
+EOF
+chmod 0755 /usr/local/bin/choracle-build-eif.sh
+
+cat >/usr/local/bin/choracle-expose-nitriding.sh <<'EOF'
+#!/bin/bash
+set -euxo pipefail
+
+SOCKET=/run/choracle/network.sock
+for _ in $(seq 1 60); do
+  if [ -S "$SOCKET" ]; then
+    break
+  fi
+  sleep 1
+done
+
+test -S "$SOCKET"
+
+curl \
+  --silent \
+  --show-error \
+  --unix-socket "$SOCKET" \
+  http:/unix/services/forwarder/expose \
+  -X POST \
+  -d '{"local":":443","remote":"192.168.127.2:443"}'
+
+ss -ltnp | grep -q ':443 .*gvproxy'
+EOF
+chmod 0755 /usr/local/bin/choracle-expose-nitriding.sh
+
+cat >/usr/local/bin/choracle-run-enclave.sh <<'EOF'
+#!/bin/bash
+set -euxo pipefail
+
+EIF_PATH='/opt/choracle/build/auth-price.eif'
+ENCLAVE_CPU_COUNT='${enclave_cpu_count}'
+ENCLAVE_MEMORY_MIB='${enclave_memory_mib}'
+ENCLAVE_NAME='${enclave_name}'
+RUN_OUTPUT='/var/log/choracle-enclave-run.json'
+
+test -s "$EIF_PATH"
+
+existing_ids=$(nitro-cli describe-enclaves | jq -r --arg name "$ENCLAVE_NAME" '.[]? | select(.EnclaveName == $name) | .EnclaveID')
+for enclave_id in $existing_ids; do
+  nitro-cli terminate-enclave --enclave-id "$enclave_id" || true
+done
+
+nitro-cli run-enclave \
+  --enclave-name "$ENCLAVE_NAME" \
+  --cpu-count "$ENCLAVE_CPU_COUNT" \
+  --memory "$ENCLAVE_MEMORY_MIB" \
+  --eif-path "$EIF_PATH" \
+  | tee "$RUN_OUTPUT"
+
+enclave_id=$(sed -n '/^{/,$p' "$RUN_OUTPUT" | jq -r '.EnclaveID')
+test "$enclave_id" != "null"
+test -n "$enclave_id"
+
+while nitro-cli describe-enclaves | jq -e --arg id "$enclave_id" '.[]? | select(.EnclaveID == $id and .State == "RUNNING")' >/dev/null; do
+  sleep 10
+done
+
+echo "Enclave $enclave_id is no longer running" >&2
+exit 1
+EOF
+chmod 0755 /usr/local/bin/choracle-run-enclave.sh
+
+cat >/etc/systemd/system/gvproxy.service <<'EOF'
+[Unit]
+Description=gvisor-tap-vsock gvproxy for Choracle Nitro Enclave
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+RuntimeDirectory=choracle
+ExecStart=/usr/local/bin/gvproxy -listen vsock://:1024 -listen unix:///run/choracle/network.sock
+Restart=always
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+cat >/etc/systemd/system/choracle-build-eif.service <<'EOF'
+[Unit]
+Description=Build Choracle enclave Docker image and EIF
+After=docker.service network-online.target
+Requires=docker.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/choracle-build-eif.sh
+RemainAfterExit=yes
+TimeoutStartSec=3600
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+cat >/etc/systemd/system/choracle-expose-nitriding.service <<'EOF'
+[Unit]
+Description=Expose parent port 443 to nitriding over gvproxy
+After=gvproxy.service
+Requires=gvproxy.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/choracle-expose-nitriding.sh
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+cat >/etc/systemd/system/choracle-enclave.service <<'EOF'
+[Unit]
+Description=Run Choracle Nitro Enclave proof service
+After=nitro-enclaves-allocator.service docker.service choracle-build-eif.service gvproxy.service choracle-expose-nitriding.service
+Requires=nitro-enclaves-allocator.service docker.service choracle-build-eif.service gvproxy.service choracle-expose-nitriding.service
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/choracle-run-enclave.sh
+Restart=always
+RestartSec=5
+TimeoutStartSec=300
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+systemctl daemon-reload
+systemctl enable gvproxy.service choracle-build-eif.service choracle-expose-nitriding.service choracle-enclave.service
+systemctl start gvproxy.service
+systemctl start choracle-build-eif.service
+systemctl start choracle-expose-nitriding.service
+systemctl start choracle-enclave.service
+
+echo "Choracle bootstrap completed. Proof endpoint target: https://$PROOF_FQDN"
