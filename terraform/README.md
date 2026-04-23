@@ -73,8 +73,18 @@ terraform output -raw pcrs_command
 terraform output -raw release_manifest_command
 ```
 
-The PCR command prints an AWS SSM command. Run that command, then inspect the
-SSM command invocation output to retrieve PCR0, PCR1, and PCR2.
+The PCR command prints an AWS SSM command. Run that command; it returns a
+`CommandId`. Then retrieve the result:
+
+```sh
+aws ssm get-command-invocation \
+  --region <REGION> \
+  --command-id <COMMAND_ID> \
+  --instance-id <INSTANCE_ID>
+```
+
+Use the `StandardOutputContent` PCR0, PCR1, and PCR2 values as the verifier
+policy for that deployed release.
 
 The parent also writes PCRs to:
 
