@@ -149,15 +149,21 @@ done
 
 test -S "$SOCKET"
 
-curl \
-  --silent \
-  --show-error \
-  --unix-socket "$SOCKET" \
-  http:/unix/services/forwarder/expose \
-  -X POST \
-  -d '{"local":":443","remote":"192.168.127.2:443"}'
+expose_port() {
+  local port="$1"
+  curl \
+    --silent \
+    --show-error \
+    --unix-socket "$SOCKET" \
+    http:/unix/services/forwarder/expose \
+    -X POST \
+    -d "{\"local\":\":$port\",\"remote\":\"192.168.127.2:$port\"}"
 
-ss -ltnp | grep -q ':443 .*gvproxy'
+  ss -ltnp | grep -q ":$port .*gvproxy"
+}
+
+expose_port 80
+expose_port 443
 EOF
 chmod 0755 /usr/local/bin/choracle-expose-nitriding.sh
 
@@ -234,7 +240,7 @@ EOF
 
 cat >/etc/systemd/system/choracle-expose-nitriding.service <<'EOF'
 [Unit]
-Description=Expose parent port 443 to nitriding over gvproxy
+Description=Expose parent ACME and HTTPS ports to nitriding over gvproxy
 After=gvproxy.service
 Requires=gvproxy.service
 

@@ -38,6 +38,12 @@ variable "allowed_https_cidr" {
   default     = "0.0.0.0/0"
 }
 
+variable "allowed_http_cidr" {
+  description = "CIDR allowed to reach the public HTTP ACME challenge endpoint."
+  type        = string
+  default     = "0.0.0.0/0"
+}
+
 variable "repo_url" {
   description = "Public Git repository URL cloned by the EC2 bootstrap."
   type        = string

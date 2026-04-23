@@ -12,10 +12,13 @@ use std::io::{Read, Write};
 use std::net::{Shutdown, TcpListener, TcpStream};
 use std::path::PathBuf;
 use std::thread;
+use std::time::Duration;
 
 const PROOF_PATH_PREFIX: &str = "/proof/v1/products/";
 const PROOF_PATH_SUFFIX: &str = "/candles";
 const MAX_REQUEST_BYTES: usize = 16 * 1024;
+const NITRIDING_READY_RETRIES: usize = 60;
+const NITRIDING_READY_RETRY_DELAY: Duration = Duration::from_millis(250);
 
 #[derive(Debug, Parser)]
 #[command(about = "Run the Nitro Enclave Coinbase candle prover")]
@@ -331,8 +334,22 @@ fn reason_phrase(status: u16) -> &'static str {
 
 fn signal_nitriding_ready(base_url: &str) -> Result<()> {
     let base_url = base_url.trim_end_matches('/');
-    send_local_http("GET", &format!("{base_url}/enclave/ready"), None)?;
-    Ok(())
+    let url = format!("{base_url}/enclave/ready");
+    let mut last_error = None;
+
+    for attempt in 1..=NITRIDING_READY_RETRIES {
+        match send_local_http("GET", &url, None) {
+            Ok(()) => return Ok(()),
+            Err(err) if attempt < NITRIDING_READY_RETRIES => {
+                last_error = Some(err);
+                thread::sleep(NITRIDING_READY_RETRY_DELAY);
+            }
+            Err(err) => last_error = Some(err),
+        }
+    }
+
+    Err(last_error.unwrap_or_else(|| anyhow!("nitriding readiness signal failed")))
+        .with_context(|| format!("nitriding did not become ready at {url}"))
 }
 
 fn send_local_http(method: &str, url: &str, body: Option<&[u8]>) -> Result<()> {
