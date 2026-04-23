@@ -103,8 +103,35 @@ then starts `nitriding`.
 
 ## Verification
 
-Get PCR0, PCR1, and PCR2 from `nitro-cli build-enclave` or from the Terraform
-deployment output, then verify a production proof:
+PCR0, PCR1, and PCR2 are measured outputs of the release build. Do not derive
+them by inspection. Get them from `nitro-cli build-enclave`, from
+`release-manifest.json`, or from the Terraform deployment output.
+
+After a Terraform deploy:
+
+```sh
+cd terraform
+terraform output -raw pcrs_command
+terraform output -raw release_manifest_command
+```
+
+Run the printed SSM command, then fetch its result:
+
+```sh
+aws ssm get-command-invocation \
+  --region <REGION> \
+  --command-id <COMMAND_ID> \
+  --instance-id <INSTANCE_ID>
+```
+
+The parent writes the same values to:
+
+```text
+/opt/choracle/build/auth-price.pcrs.txt
+/opt/choracle/build/release-manifest.json
+```
+
+Then verify a production proof:
 
 ```sh
 cargo run --bin verify-proof -- proof.json \

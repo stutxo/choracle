@@ -107,11 +107,13 @@
 
           enclaveRoot = pkgs.runCommand "choracle-enclave-root" { } ''
             mkdir -p "$out/usr/local/bin"
+            mkdir -p "$out/etc"
             install -m 0755 ${choracle}/bin/enclave-prover "$out/usr/local/bin/enclave-prover"
             install -m 0755 ${choracle}/bin/verify-proof "$out/usr/local/bin/verify-proof"
             install -m 0755 ${choracle}/bin/choracle-runtime-config "$out/usr/local/bin/choracle-runtime-config"
             install -m 0755 ${nitriding}/bin/nitriding-daemon "$out/usr/local/bin/nitriding"
             install -m 0755 ${./deploy/enclave-entrypoint.sh} "$out/usr/local/bin/enclave-entrypoint.sh"
+            ln -s /run/resolvconf/resolv.conf "$out/etc/resolv.conf"
           '';
 
           imageRoot = pkgs.buildEnv {
