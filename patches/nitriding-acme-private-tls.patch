@@ -1,0 +1,13 @@
+diff --git a/enclave.go b/enclave.go
+index 6d95a8d..b88d2a5 100644
+--- a/enclave.go
++++ b/enclave.go
+@@ -579,6 +579,8 @@ func (e *Enclave) setupAcme() error {
+ 		HostPolicy: autocert.HostWhitelist([]string{e.cfg.FQDN}...),
+ 	}
+ 	e.extPubSrv.TLSConfig = certManager.TLSConfig()
++	// Both external servers need an in-memory TLS config for ServeTLS("", "").
++	e.extPrivSrv.TLSConfig = e.extPubSrv.TLSConfig.Clone()
+ 
+ 	go func() {
+ 		var rawData []byte

@@ -81,6 +81,9 @@
             pname = "nitriding";
             version = "2b7dfefaee56819681b7f5a4ee8d66a417ad457d";
             src = nitridingDaemon;
+            patches = [
+              ./patches/nitriding-acme-private-tls.patch
+            ];
 
             # Refresh with:
             #   nix build .#nitriding
