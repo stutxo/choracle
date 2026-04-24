@@ -6,39 +6,12 @@ data "aws_availability_zones" "available" {
   state = "available"
 }
 
-data "aws_caller_identity" "current" {}
-
 data "aws_ssm_parameter" "parent_ami" {
   name = var.ami_ssm_parameter
 }
 
 locals {
   availability_zone = var.availability_zone != "" ? var.availability_zone : data.aws_availability_zones.available.names[0]
-  artifact_bucket   = var.artifact_bucket_name != "" ? var.artifact_bucket_name : lower("${var.name}-${var.environment}-${data.aws_caller_identity.current.account_id}-${var.region}-artifacts")
-  release_id        = substr(filesha256(var.eif_path), 0, 16)
-
-  artifact_files = {
-    eif = {
-      source = var.eif_path
-      key    = "releases/${local.release_id}/choracle.eif"
-      sha256 = filesha256(var.eif_path)
-    }
-    release_manifest = {
-      source = var.release_manifest_path
-      key    = "releases/${local.release_id}/release-manifest.json"
-      sha256 = filesha256(var.release_manifest_path)
-    }
-    gvproxy = {
-      source = var.gvproxy_path
-      key    = "releases/${local.release_id}/gvproxy"
-      sha256 = filesha256(var.gvproxy_path)
-    }
-    runtime_config = {
-      source = var.runtime_config_path
-      key    = "releases/${local.release_id}/choracle-runtime-config"
-      sha256 = filesha256(var.runtime_config_path)
-    }
-  }
 
   common_tags = {
     Name        = var.name
@@ -119,55 +92,7 @@ resource "aws_vpc_security_group_egress_rule" "all_ipv4" {
   security_group_id = aws_security_group.parent.id
   cidr_ipv4         = "0.0.0.0/0"
   ip_protocol       = "-1"
-  description       = "Outbound for package installs, S3 artifacts, ACME, and Coinbase"
-}
-
-resource "aws_s3_bucket" "artifacts" {
-  bucket        = local.artifact_bucket
-  force_destroy = var.artifact_bucket_force_destroy
-
-  tags = merge(local.common_tags, {
-    Name = "${var.name}-artifacts"
-  })
-}
-
-resource "aws_s3_bucket_public_access_block" "artifacts" {
-  bucket = aws_s3_bucket.artifacts.id
-
-  block_public_acls       = true
-  block_public_policy     = true
-  ignore_public_acls      = true
-  restrict_public_buckets = true
-}
-
-resource "aws_s3_bucket_server_side_encryption_configuration" "artifacts" {
-  bucket = aws_s3_bucket.artifacts.id
-
-  rule {
-    apply_server_side_encryption_by_default {
-      sse_algorithm = "AES256"
-    }
-  }
-}
-
-resource "aws_s3_bucket_versioning" "artifacts" {
-  bucket = aws_s3_bucket.artifacts.id
-
-  versioning_configuration {
-    status = "Enabled"
-  }
-}
-
-resource "aws_s3_object" "artifacts" {
-  for_each = local.artifact_files
-
-  bucket                 = aws_s3_bucket.artifacts.id
-  key                    = each.value.key
-  source                 = each.value.source
-  source_hash            = filebase64sha256(each.value.source)
-  server_side_encryption = "AES256"
-
-  tags = local.common_tags
+  description       = "Outbound for package installs, git, ACME, and Coinbase"
 }
 
 data "aws_iam_policy_document" "ec2_assume_role" {
@@ -192,19 +117,6 @@ resource "aws_iam_role_policy_attachment" "ssm_core" {
   policy_arn = "arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore"
 }
 
-data "aws_iam_policy_document" "parent_artifacts" {
-  statement {
-    actions   = ["s3:GetObject"]
-    resources = [for object in aws_s3_object.artifacts : object.arn]
-  }
-}
-
-resource "aws_iam_role_policy" "parent_artifacts" {
-  name   = "${var.name}-artifact-read"
-  role   = aws_iam_role.parent.id
-  policy = data.aws_iam_policy_document.parent_artifacts.json
-}
-
 resource "aws_iam_instance_profile" "parent" {
   name = "${var.name}-parent-profile"
   role = aws_iam_role.parent.name
@@ -222,7 +134,7 @@ resource "aws_instance" "parent" {
 
   metadata_options {
     http_endpoint               = "enabled"
-    http_put_response_hop_limit = 1
+    http_put_response_hop_limit = 2
     http_tokens                 = "required"
   }
 
@@ -238,26 +150,14 @@ resource "aws_instance" "parent" {
   }
 
   user_data = templatefile("${path.module}/scripts/choracle-bootstrap.sh.tftpl", {
-    artifact_bucket         = aws_s3_bucket.artifacts.id
-    enclave_cpu_count       = var.enclave_cpu_count
-    enclave_memory_mib      = var.enclave_memory_mib
-    enclave_name            = var.enclave_name
-    eif_key                 = aws_s3_object.artifacts["eif"].key
-    eif_sha256              = local.artifact_files.eif.sha256
-    gvproxy_key             = aws_s3_object.artifacts["gvproxy"].key
-    gvproxy_sha256          = local.artifact_files.gvproxy.sha256
-    proof_fqdn              = var.proof_fqdn
-    region                  = var.region
-    release_manifest_key    = aws_s3_object.artifacts["release_manifest"].key
-    release_manifest_sha256 = local.artifact_files.release_manifest.sha256
-    runtime_config_key      = aws_s3_object.artifacts["runtime_config"].key
-    runtime_config_sha256   = local.artifact_files.runtime_config.sha256
+    enclave_cpu_count  = var.enclave_cpu_count
+    enclave_memory_mib = var.enclave_memory_mib
+    enclave_name       = var.enclave_name
+    proof_fqdn         = var.proof_fqdn
+    region             = var.region
+    source_ref         = var.source_ref
+    source_repo_url    = var.source_repo_url
   })
-
-  depends_on = [
-    aws_iam_role_policy.parent_artifacts,
-    aws_s3_object.artifacts,
-  ]
 
   tags = merge(local.common_tags, {
     Name = "${var.name}-parent"

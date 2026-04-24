@@ -36,56 +36,26 @@ variable "proof_fqdn" {
   }
 }
 
-variable "eif_path" {
-  description = "Local path to the prebuilt Choracle EIF artifact."
+variable "source_repo_url" {
+  description = "Git repository URL cloned by the parent instance to build the Choracle release artifacts."
   type        = string
+  default     = "https://github.com/stutxo/choracle.git"
 
   validation {
-    condition     = fileexists(var.eif_path)
-    error_message = "eif_path must point to an existing local file."
+    condition     = length(trimspace(var.source_repo_url)) == length(var.source_repo_url) && length(var.source_repo_url) > 0
+    error_message = "source_repo_url must be a non-empty Git repository URL without leading or trailing whitespace."
   }
 }
 
-variable "release_manifest_path" {
-  description = "Local path to the release-manifest.json produced with the EIF."
+variable "source_ref" {
+  description = "Git branch, tag, or commit checked out by the parent instance before building release artifacts. Prefer an immutable commit SHA for production."
   type        = string
+  default     = "main"
 
   validation {
-    condition     = fileexists(var.release_manifest_path)
-    error_message = "release_manifest_path must point to an existing local file."
+    condition     = length(trimspace(var.source_ref)) == length(var.source_ref) && length(var.source_ref) > 0
+    error_message = "source_ref must be a non-empty Git ref without leading or trailing whitespace."
   }
-}
-
-variable "gvproxy_path" {
-  description = "Local path to the prebuilt gvproxy binary for the parent instance architecture."
-  type        = string
-
-  validation {
-    condition     = fileexists(var.gvproxy_path)
-    error_message = "gvproxy_path must point to an existing local file."
-  }
-}
-
-variable "runtime_config_path" {
-  description = "Local path to the prebuilt choracle-runtime-config binary for the parent instance architecture."
-  type        = string
-
-  validation {
-    condition     = fileexists(var.runtime_config_path)
-    error_message = "runtime_config_path must point to an existing local file."
-  }
-}
-
-variable "artifact_bucket_name" {
-  description = "Optional S3 bucket name for release artifacts. Defaults to an account/region-scoped name."
-  type        = string
-  default     = ""
-}
-
-variable "artifact_bucket_force_destroy" {
-  description = "Whether Terraform may delete the release artifact bucket while it contains objects."
-  type        = bool
-  default     = false
 }
 
 variable "route53_zone_id" {
@@ -131,9 +101,9 @@ variable "availability_zone" {
 }
 
 variable "root_volume_size_gb" {
-  description = "Root EBS volume size for the parent host runtime and downloaded release artifacts."
+  description = "Root EBS volume size for the parent host Nix store, release build, and runtime artifacts."
   type        = number
-  default     = 30
+  default     = 100
 }
 
 variable "enclave_cpu_count" {

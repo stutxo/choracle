@@ -11,14 +11,14 @@ HTTPS evidence, not a standalone TLS transcript proof.
 - Elastic IP
 - security group allowing inbound TCP 443
 - IAM role/profile with SSM Session Manager access
-- private encrypted S3 bucket for release artifacts
 - optional Route53 `A` record for `proof_fqdn`
 
 The parent instance bootstraps itself with cloud-init:
 
-1. Installs Nitro CLI, AWS CLI, jq, and minimal runtime tools.
-2. Downloads prebuilt release artifacts from the private S3 artifact bucket.
-3. Verifies each artifact's SHA-256 digest.
+1. Installs Nitro CLI, Docker, Go, Nix, jq, and minimal runtime tools.
+2. Clones `source_repo_url` and checks out `source_ref`.
+3. Builds the EIF, PCRs, release manifest, `gvproxy`, and runtime config on the
+   parent instance.
 4. Writes PCR measurements and the release manifest under `/opt/choracle/build`.
 5. Starts `gvproxy`, serves the runtime FQDN over vsock, exposes parent port
    443 to nitriding, and runs the enclave.
@@ -27,7 +27,7 @@ The parent instance bootstraps itself with cloud-init:
 
 - AWS credentials for Terraform.
 - A public DNS name for the proof service, for example `proof.example.com`.
-- Prebuilt release artifacts from `deploy/build-reproducible-eif.sh`.
+- A Git repo/ref reachable from the parent instance.
 - Route53 hosted zone ID if Terraform should manage the DNS record.
 
 If `route53_zone_id` is omitted, create the DNS record manually after apply:
@@ -38,13 +38,6 @@ proof.example.com A <terraform output parent_public_ip>
 
 ## Configure
 
-Build release artifacts first:
-
-```sh
-BUILD_DIR="$PWD/build" \
-  deploy/build-reproducible-eif.sh
-```
-
 ```sh
 cd terraform
 cp terraform.tfvars.example terraform.tfvars
@@ -53,13 +46,14 @@ cp terraform.tfvars.example terraform.tfvars
 Example:
 
 ```hcl
-proof_fqdn            = "proof.example.com"
-eif_path              = "../build/choracle.eif"
-release_manifest_path = "../build/release-manifest.json"
-gvproxy_path          = "../build/gvproxy"
-runtime_config_path   = "../build/choracle-runtime-config"
-route53_zone_id       = "Z0123456789ABCDEFG"
+proof_fqdn      = "proof.example.com"
+source_repo_url = "https://github.com/stutxo/choracle.git"
+source_ref      = "main"
+route53_zone_id = "Z0123456789ABCDEFG"
 ```
+
+For production, prefer setting `source_ref` to an immutable commit SHA that has
+already been pushed to `source_repo_url`.
 
 ## Deploy
 
@@ -68,17 +62,16 @@ terraform init
 terraform apply
 ```
 
-Terraform uploads the local artifacts to a private encrypted S3 bucket. First
-boot downloads and verifies those artifacts, then starts the parent services.
+First boot builds the release artifacts on the parent, then starts the parent
+services and enclave.
 
 ## Outputs
 
 ```sh
 terraform output -raw proof_url
-terraform output -raw artifact_bucket
-terraform output -raw artifact_release_id
 terraform output -raw parent_public_ip
 terraform output -raw parent_instance_id
+terraform output -raw build_source
 terraform output -raw ssm_session_command
 terraform output -raw pcrs_command
 terraform output -raw release_manifest_command

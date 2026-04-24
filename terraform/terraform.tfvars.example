@@ -1,9 +1,8 @@
 proof_fqdn = "proof.example.com"
 
-eif_path              = "../build/choracle.eif"
-release_manifest_path = "../build/release-manifest.json"
-gvproxy_path          = "../build/gvproxy"
-runtime_config_path   = "../build/choracle-runtime-config"
+# Parent bootstrap clones this repo/ref and builds the EIF on the parent.
+source_repo_url = "https://github.com/stutxo/choracle.git"
+source_ref      = "main"
 
 # Optional: let Terraform create proof_fqdn in Route53.
 route53_zone_id = "Z0123456789ABCDEFG"

@@ -14,7 +14,7 @@ public HTTPS inside the enclave and exposes Nitro attestation.
 - `deploy/build-reproducible-eif.sh`: release artifact builder for the EIF,
   manifest, PCRs, `gvproxy`, and parent runtime-config binary.
 - `terraform/`: one-instance AWS deployment for a public HTTPS proof endpoint
-  using prebuilt release artifacts.
+  that builds release artifacts on the parent instance.
 
 ## Proof API
 
@@ -74,7 +74,7 @@ Use [terraform/README.md](terraform/README.md) for the standard public AWS
 deployment. The deployment requires:
 
 - a public DNS name such as `proof.example.com`
-- prebuilt release artifacts from `deploy/build-reproducible-eif.sh`
+- a Git repo/ref reachable from the parent instance
 - a Nitro Enclave-capable EC2 parent instance
 
 Real Nitro attestation requires a non-debug Nitro Enclave. Debug-mode
@@ -109,10 +109,10 @@ The public proof FQDN is not baked into the measured image. At runtime the
 enclave entrypoint fetches the FQDN from the parent instance over Nitro vsock,
 then starts `nitriding`.
 
-Terraform uploads `choracle.eif`, `release-manifest.json`, `gvproxy`, and
-`choracle-runtime-config` to a private encrypted S3 bucket. The EC2 parent
-downloads those artifacts, verifies their SHA-256 digests, and runs the enclave;
-it does not clone the repository or build the EIF on first boot.
+Terraform configures the EC2 parent to clone the configured Git repo/ref and run
+`deploy/build-reproducible-eif.sh` on first boot. The parent writes the EIF,
+PCRs, release manifest, `gvproxy`, and runtime-config binary under
+`/opt/choracle/build`, then runs the enclave from those artifacts.
 
 ## Verification
 

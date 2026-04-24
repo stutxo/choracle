@@ -13,19 +13,14 @@ output "proof_url" {
   value       = "https://${var.proof_fqdn}"
 }
 
-output "artifact_bucket" {
-  description = "Private S3 bucket containing uploaded release artifacts."
-  value       = aws_s3_bucket.artifacts.id
-}
-
-output "artifact_release_id" {
-  description = "Release artifact key prefix derived from the EIF SHA-256."
-  value       = local.release_id
-}
-
 output "dns_record" {
   description = "DNS record managed by Terraform, when route53_zone_id is set."
   value       = var.route53_zone_id == "" ? "not managed by this Terraform config" : one(aws_route53_record.proof[*].fqdn)
+}
+
+output "build_source" {
+  description = "Git source cloned by the parent instance during bootstrap."
+  value       = "${var.source_repo_url} @ ${var.source_ref}"
 }
 
 output "ssm_session_command" {

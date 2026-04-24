@@ -5,8 +5,11 @@ release artifact builder consumed by that Terraform deployment.
 
 ## Build Artifacts
 
-Run this on a Nitro-capable ARM64 Linux builder with Nix, Docker, Nitro CLI,
-Git, and Go installed:
+Terraform runs this script on the Nitro parent instance during first boot. You
+can also run it manually on a Nitro-capable ARM64 Linux builder with Nix,
+Docker, Nitro CLI, Git, Go, jq, and sha256sum installed. A macOS workstation is
+not enough for this step, even on Apple Silicon, because the EIF build depends
+on the Linux Nitro CLI toolchain and the flake targets `aarch64-linux`.
 
 ```sh
 BUILD_DIR=/tmp/choracle-build \
@@ -23,8 +26,8 @@ The script writes:
 - `gvproxy`
 - `choracle-runtime-config`
 
-`choracle.eif`, `release-manifest.json`, `gvproxy`, and
-`choracle-runtime-config` are passed to Terraform as local artifact paths.
+The Terraform bootstrap consumes these files from the parent instance's
+`/opt/choracle/build` directory.
 
 ## Notes
 

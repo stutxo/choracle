@@ -12,6 +12,37 @@ RUNTIME_CONFIG_PATH=${RUNTIME_CONFIG_PATH:-"$BUILD_DIR/choracle-runtime-config"}
 NIX_FLAGS=${NIX_FLAGS:-"--extra-experimental-features nix-command --extra-experimental-features flakes"}
 NIX=${NIX:-nix}
 
+fail() {
+  printf 'error: %s\n' "$*" >&2
+  exit 1
+}
+
+require_command() {
+  command -v "$1" >/dev/null 2>&1 || fail "missing required command: $1"
+}
+
+preflight() {
+  case "$(uname -s)" in
+    Linux) ;;
+    *) fail "this builder must run on ARM64 Linux with Nitro CLI; use a Nitro-capable Graviton EC2 builder, not macOS" ;;
+  esac
+
+  case "$(uname -m)" in
+    aarch64|arm64) ;;
+    *) fail "this builder targets aarch64-linux; run it on an ARM64 Linux builder" ;;
+  esac
+
+  require_command "$NIX"
+  require_command docker
+  require_command nitro-cli
+  require_command git
+  require_command go
+  require_command jq
+  require_command sha256sum
+}
+
+preflight
+
 mkdir -p "$BUILD_DIR"
 
 oci_store_path=$($NIX $NIX_FLAGS build "$PROJECT_DIR#choracle-enclave-oci-aarch64" --no-link --print-out-paths)
