@@ -21,9 +21,71 @@ variable "proof_fqdn" {
   type        = string
 
   validation {
-    condition     = length(trimspace(var.proof_fqdn)) > 0 && !can(regex("^https?://", var.proof_fqdn))
+    condition = (
+      length(trimspace(var.proof_fqdn)) == length(var.proof_fqdn) &&
+      length(var.proof_fqdn) <= 253 &&
+      length(split(".", var.proof_fqdn)) >= 2 &&
+      !can(regex("^https?://", var.proof_fqdn)) &&
+      !strcontains(var.proof_fqdn, "/") &&
+      !strcontains(var.proof_fqdn, ":") &&
+      !strcontains(var.proof_fqdn, "_") &&
+      !strcontains(var.proof_fqdn, "..") &&
+      can(regex("^[A-Za-z0-9][A-Za-z0-9.-]*[A-Za-z0-9]$", var.proof_fqdn))
+    )
     error_message = "proof_fqdn must be a bare DNS name, not a URL."
   }
+}
+
+variable "eif_path" {
+  description = "Local path to the prebuilt Choracle EIF artifact."
+  type        = string
+
+  validation {
+    condition     = fileexists(var.eif_path)
+    error_message = "eif_path must point to an existing local file."
+  }
+}
+
+variable "release_manifest_path" {
+  description = "Local path to the release-manifest.json produced with the EIF."
+  type        = string
+
+  validation {
+    condition     = fileexists(var.release_manifest_path)
+    error_message = "release_manifest_path must point to an existing local file."
+  }
+}
+
+variable "gvproxy_path" {
+  description = "Local path to the prebuilt gvproxy binary for the parent instance architecture."
+  type        = string
+
+  validation {
+    condition     = fileexists(var.gvproxy_path)
+    error_message = "gvproxy_path must point to an existing local file."
+  }
+}
+
+variable "runtime_config_path" {
+  description = "Local path to the prebuilt choracle-runtime-config binary for the parent instance architecture."
+  type        = string
+
+  validation {
+    condition     = fileexists(var.runtime_config_path)
+    error_message = "runtime_config_path must point to an existing local file."
+  }
+}
+
+variable "artifact_bucket_name" {
+  description = "Optional S3 bucket name for release artifacts. Defaults to an account/region-scoped name."
+  type        = string
+  default     = ""
+}
+
+variable "artifact_bucket_force_destroy" {
+  description = "Whether Terraform may delete the release artifact bucket while it contains objects."
+  type        = bool
+  default     = false
 }
 
 variable "route53_zone_id" {
@@ -36,36 +98,6 @@ variable "allowed_https_cidr" {
   description = "CIDR allowed to reach the public HTTPS endpoint."
   type        = string
   default     = "0.0.0.0/0"
-}
-
-variable "allowed_http_cidr" {
-  description = "CIDR allowed to reach the public HTTP ACME challenge endpoint."
-  type        = string
-  default     = "0.0.0.0/0"
-}
-
-variable "repo_url" {
-  description = "Public Git repository URL cloned by the EC2 bootstrap."
-  type        = string
-  default     = "https://github.com/stutxo/choracle.git"
-}
-
-variable "repo_ref" {
-  description = "Git branch, tag, or commit checked out by the EC2 bootstrap. Use a commit for reproducible PCRs."
-  type        = string
-  default     = "main"
-}
-
-variable "nitriding_commit" {
-  description = "Deprecated; nitriding-daemon is pinned by flake.nix."
-  type        = string
-  default     = "2b7dfefaee56819681b7f5a4ee8d66a417ad457d"
-}
-
-variable "gvproxy_ref" {
-  description = "gvisor-tap-vsock ref used to build gvproxy on the parent instance."
-  type        = string
-  default     = "v0.7.4"
 }
 
 variable "instance_type" {
@@ -99,9 +131,9 @@ variable "availability_zone" {
 }
 
 variable "root_volume_size_gb" {
-  description = "Root EBS volume size. Docker builds need room for Rust, Go, and EIF layers."
+  description = "Root EBS volume size for the parent host runtime and downloaded release artifacts."
   type        = number
-  default     = 100
+  default     = 30
 }
 
 variable "enclave_cpu_count" {

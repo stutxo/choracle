@@ -11,16 +11,18 @@ public HTTPS inside the enclave and exposes Nitro attestation.
   attestation document.
 - `verify-proof`: offline verifier for proof bundles.
 - `flake.nix`: canonical reproducible enclave OCI image build.
-- `Dockerfile.enclave`: legacy development image path; it is not the
-  reproducible release build.
-- `terraform/`: one-instance AWS deployment for a public HTTPS proof endpoint.
-- `deploy/`: lower-level manual deployment scripts.
+- `deploy/build-reproducible-eif.sh`: release artifact builder for the EIF,
+  manifest, PCRs, `gvproxy`, and parent runtime-config binary.
+- `terraform/`: one-instance AWS deployment for a public HTTPS proof endpoint
+  using prebuilt release artifacts.
 
 ## Proof API
 
 ```text
 GET /proof/v1/products/BTC-USD/candles?start=<epoch>&end=<epoch>&granularity=FIVE_MINUTE&limit=1
 ```
+
+`start` and `end` must both equal the same 5-minute-aligned candle start.
 
 The proof bundle schema is `coinbase-candle-proof-bundle/v1`. Its attested
 payload schema is `coinbase-candle-proof-payload/v1`. The proof bundle contains:
@@ -33,7 +35,10 @@ payload schema is `coinbase-candle-proof-payload/v1`. The proof bundle contains:
 
 The proof policy is historical observed-response semantics: the enclave proves
 that it fetched the Coinbase response at attestation time. The request time does
-not need to be near the candle close.
+not need to be near the candle close. This is enclave-observed HTTPS evidence,
+not a standalone TLS transcript proof: verifiers trust the PCR-pinned enclave
+code to have performed the TLS fetch and bound the observed response into the
+Nitro attestation document.
 
 ## Local Development
 
@@ -48,7 +53,7 @@ cargo run --bin enclave-prover -- \
   --once \
   --mock-attestation \
   --start 1713718800 \
-  --end 1713719100 \
+  --end 1713718800 \
   --output /tmp/proof.json
 ```
 
@@ -69,7 +74,7 @@ Use [terraform/README.md](terraform/README.md) for the standard public AWS
 deployment. The deployment requires:
 
 - a public DNS name such as `proof.example.com`
-- a public GitHub repository URL/ref that the EC2 parent can clone
+- prebuilt release artifacts from `deploy/build-reproducible-eif.sh`
 - a Nitro Enclave-capable EC2 parent instance
 
 Real Nitro attestation requires a non-debug Nitro Enclave. Debug-mode
@@ -94,12 +99,20 @@ This writes:
 
 - `choracle-enclave-image.tar`
 - `choracle.eif`
+- `gvproxy`
+- `choracle-runtime-config`
 - `measurements.json`
+- `choracle.pcrs.txt`
 - `release-manifest.json`
 
 The public proof FQDN is not baked into the measured image. At runtime the
 enclave entrypoint fetches the FQDN from the parent instance over Nitro vsock,
 then starts `nitriding`.
+
+Terraform uploads `choracle.eif`, `release-manifest.json`, `gvproxy`, and
+`choracle-runtime-config` to a private encrypted S3 bucket. The EC2 parent
+downloads those artifacts, verifies their SHA-256 digests, and runs the enclave;
+it does not clone the repository or build the EIF on first boot.
 
 ## Verification
 
@@ -140,9 +153,13 @@ cargo run --bin verify-proof -- proof.json \
   --pcr 2=<PCR2_HEX>
 ```
 
-Verification checks the attestation first, then validates the recorded Coinbase
-TLS certificate chain for `api.coinbase.com` at the attestation timestamp using
-the WebPKI root store. Certificate pinning and revocation checks are not used.
+Verification validates payload/body integrity, Nitro attestation binding and
+PCRs, then validates the recorded Coinbase TLS certificate chain for
+`api.coinbase.com` at the attestation timestamp using the WebPKI root store.
+Certificate pinning and revocation checks are not used. Nitro attestation
+certificates are validated at the attestation document timestamp so historical
+proofs remain verifiable; documents with timestamps too far in the verifier's
+future are rejected.
 
 
 ## Example

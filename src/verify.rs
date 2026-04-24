@@ -22,6 +22,7 @@ pub struct VerificationConfig {
     pub expected_pcrs: BTreeMap<u16, Vec<u8>>,
     pub required_pcrs: Vec<u16>,
     pub max_skew_seconds: i64,
+    pub max_future_skew_seconds: i64,
 }
 
 impl VerificationConfig {
@@ -30,6 +31,7 @@ impl VerificationConfig {
             expected_pcrs,
             required_pcrs: vec![0, 1, 2],
             max_skew_seconds: DEFAULT_MAX_SKEW_SECONDS,
+            max_future_skew_seconds: DEFAULT_MAX_SKEW_SECONDS,
         }
     }
 }
@@ -76,6 +78,7 @@ where
 
     let attestation_doc = b64_decode(&bundle.attestation_doc_b64)?;
     let attestation = verifier.verify(&attestation_doc, now)?;
+    verify_attestation_time_bounds(&attestation, config, now)?;
     verify_attestation_binding(&payload_bytes, &attestation, config)?;
     verify_tls_certificate_chain(&payload.tls, attestation.timestamp_unix, HOST)?;
     verify_time_policy(&payload, &attestation, config)?;
@@ -130,6 +133,12 @@ fn verify_payload_policy(payload: &ProofPayload, body_json: &Value) -> Result<()
     if payload.request_start > payload.request_end {
         bail!("request_start must be less than or equal to request_end");
     }
+    if payload.request_start != payload.request_end {
+        bail!("request_start and request_end must both equal the candle start");
+    }
+    if payload.request_start % GRANULARITY_SECONDS != 0 {
+        bail!("request_start must be 5-minute aligned");
+    }
     let expected_query = coinbase_candle_query(payload.request_start, payload.request_end)?;
     if payload.request_query != expected_query {
         bail!("request_query did not match attested Coinbase v3 query");
@@ -137,10 +146,8 @@ fn verify_payload_policy(payload: &ProofPayload, body_json: &Value) -> Result<()
     if payload.selected_candle.time % GRANULARITY_SECONDS != 0 {
         bail!("selected candle time was not 5-minute aligned");
     }
-    if payload.selected_candle.time < payload.request_start
-        || payload.selected_candle.time > payload.request_end
-    {
-        bail!("selected candle time was outside the attested request range");
+    if payload.selected_candle.time != payload.request_start {
+        bail!("selected candle time did not equal request_start");
     }
     if !contains_selected_candle(body_json, &payload.selected_candle)? {
         bail!("selected_candle did not match body_b64");
@@ -230,6 +237,22 @@ fn verify_attestation_binding(
     Ok(())
 }
 
+fn verify_attestation_time_bounds(
+    attestation: &VerifiedAttestation,
+    config: &VerificationConfig,
+    now: OffsetDateTime,
+) -> Result<()> {
+    let future_skew = attestation.timestamp_unix - now.unix_timestamp();
+    if future_skew > config.max_future_skew_seconds {
+        bail!(
+            "attestation timestamp was too far in the future: {}s > {}s",
+            future_skew,
+            config.max_future_skew_seconds
+        );
+    }
+    Ok(())
+}
+
 fn verify_time_policy(
     payload: &ProofPayload,
     attestation: &VerifiedAttestation,
@@ -301,9 +324,9 @@ mod tests {
             granularity: GRANULARITY_LABEL.to_string(),
             granularity_seconds: GRANULARITY_SECONDS,
             request_start: 1713718800,
-            request_end: 1713719100,
+            request_end: 1713718800,
             request_path: REQUEST_PATH.to_string(),
-            request_query: "start=1713718800&end=1713719100&granularity=FIVE_MINUTE&limit=1"
+            request_query: "start=1713718800&end=1713718800&granularity=FIVE_MINUTE&limit=1"
                 .to_string(),
             http_status: 200,
             http_date: "Mon, 20 Apr 2026 20:45:30 GMT".to_string(),
@@ -474,10 +497,39 @@ mod tests {
     fn rejects_selected_candle_outside_request_range() {
         let mut payload = payload();
         payload.request_start = 1713719100;
+        payload.request_end = 1713719100;
         payload.request_query =
             "start=1713719100&end=1713719100&granularity=FIVE_MINUTE&limit=1".to_string();
         let bundle = bundle_for(&payload);
         assert!(verify_bundle(&bundle, &MockAttestationVerifier, &config(), now_utc()).is_err());
+    }
+
+    #[test]
+    fn rejects_wide_request_range() {
+        let mut payload = payload();
+        payload.request_end = 1713719100;
+        payload.request_query =
+            "start=1713718800&end=1713719100&granularity=FIVE_MINUTE&limit=1".to_string();
+        let bundle = bundle_for(&payload);
+        assert!(verify_bundle(&bundle, &MockAttestationVerifier, &config(), now_utc()).is_err());
+    }
+
+    #[test]
+    fn rejects_unaligned_request_start() {
+        let mut payload = payload();
+        payload.request_start = 1713718801;
+        payload.request_end = 1713718801;
+        payload.request_query =
+            "start=1713718801&end=1713718801&granularity=FIVE_MINUTE&limit=1".to_string();
+        let bundle = bundle_for(&payload);
+        assert!(verify_bundle(&bundle, &MockAttestationVerifier, &config(), now_utc()).is_err());
+    }
+
+    #[test]
+    fn rejects_future_attestation_timestamp() {
+        let bundle = bundle_for(&payload());
+        let now = OffsetDateTime::from_unix_timestamp(1776717629).unwrap();
+        assert!(verify_bundle(&bundle, &MockAttestationVerifier, &config(), now).is_err());
     }
 
     #[test]

@@ -95,6 +95,12 @@ pub fn validate_request(request: &ProofRequest) -> Result<()> {
     if request.start > request.end {
         return Err(anyhow!("start must be less than or equal to end"));
     }
+    if request.start != request.end {
+        return Err(anyhow!("start and end must both equal the candle start"));
+    }
+    if request.start % GRANULARITY_SECONDS != 0 {
+        return Err(anyhow!("start must be 5-minute aligned"));
+    }
     Ok(())
 }
 

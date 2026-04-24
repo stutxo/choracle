@@ -26,7 +26,8 @@ pub fn parse_http_date_epoch(value: &str) -> Result<i64> {
 
 pub fn last_completed_bucket(now: OffsetDateTime) -> (i64, i64) {
     let end = (now.unix_timestamp() / GRANULARITY_SECONDS) * GRANULARITY_SECONDS;
-    (end - GRANULARITY_SECONDS, end)
+    let start = end - GRANULARITY_SECONDS;
+    (start, start)
 }
 
 #[cfg(test)]
@@ -36,12 +37,12 @@ mod tests {
     #[test]
     fn last_completed_bucket_uses_exact_boundary_as_end() {
         let now = OffsetDateTime::from_unix_timestamp(1776772800).unwrap();
-        assert_eq!(last_completed_bucket(now), (1776772500, 1776772800));
+        assert_eq!(last_completed_bucket(now), (1776772500, 1776772500));
     }
 
     #[test]
     fn last_completed_bucket_inside_interval() {
         let now = OffsetDateTime::from_unix_timestamp(1776772921).unwrap();
-        assert_eq!(last_completed_bucket(now), (1776772500, 1776772800));
+        assert_eq!(last_completed_bucket(now), (1776772500, 1776772500));
     }
 }

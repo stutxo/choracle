@@ -25,6 +25,9 @@ struct Args {
 
     #[arg(long, default_value_t = 300)]
     max_skew_seconds: i64,
+
+    #[arg(long, default_value_t = 300)]
+    max_future_skew_seconds: i64,
 }
 
 fn main() -> Result<()> {
@@ -34,6 +37,7 @@ fn main() -> Result<()> {
     let expected_pcrs: BTreeMap<u16, Vec<u8>> = args.pcrs.into_iter().collect();
     let mut config = VerificationConfig::new(expected_pcrs);
     config.max_skew_seconds = args.max_skew_seconds;
+    config.max_future_skew_seconds = args.max_future_skew_seconds;
 
     let verified = if args.mock_attestation {
         verify_bundle_json(&bytes, &MockAttestationVerifier, &config, now_utc())?

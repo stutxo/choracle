@@ -1,7 +1,8 @@
 # AWS Deployment
 
 This Terraform deploys Choracle as a public HTTPS service on a single Nitro
-Enclave-enabled EC2 parent instance.
+Enclave-enabled EC2 parent instance. The deployed proof is enclave-observed
+HTTPS evidence, not a standalone TLS transcript proof.
 
 ## Resources
 
@@ -10,24 +11,23 @@ Enclave-enabled EC2 parent instance.
 - Elastic IP
 - security group allowing inbound TCP 443
 - IAM role/profile with SSM Session Manager access
+- private encrypted S3 bucket for release artifacts
 - optional Route53 `A` record for `proof_fqdn`
 
 The parent instance bootstraps itself with cloud-init:
 
-1. Installs Docker, Nitro CLI, Nix, Go, Git, jq, and build tools.
-2. Builds `gvproxy`.
-3. Clones the configured public Git repository/ref.
-4. Builds the reproducible Nix OCI image and EIF.
-5. Writes PCR measurements and a release manifest under `/opt/choracle/build`.
-6. Starts `gvproxy`, serves the runtime FQDN over vsock, exposes parent port 443
-   to nitriding, and runs the enclave.
+1. Installs Nitro CLI, AWS CLI, jq, and minimal runtime tools.
+2. Downloads prebuilt release artifacts from the private S3 artifact bucket.
+3. Verifies each artifact's SHA-256 digest.
+4. Writes PCR measurements and the release manifest under `/opt/choracle/build`.
+5. Starts `gvproxy`, serves the runtime FQDN over vsock, exposes parent port
+   443 to nitriding, and runs the enclave.
 
 ## Requirements
 
 - AWS credentials for Terraform.
 - A public DNS name for the proof service, for example `proof.example.com`.
-- A public Git repository URL/ref that the EC2 parent can clone. Use a commit
-  hash for reproducible PCRs.
+- Prebuilt release artifacts from `deploy/build-reproducible-eif.sh`.
 - Route53 hosted zone ID if Terraform should manage the DNS record.
 
 If `route53_zone_id` is omitted, create the DNS record manually after apply:
@@ -38,6 +38,13 @@ proof.example.com A <terraform output parent_public_ip>
 
 ## Configure
 
+Build release artifacts first:
+
+```sh
+BUILD_DIR="$PWD/build" \
+  deploy/build-reproducible-eif.sh
+```
+
 ```sh
 cd terraform
 cp terraform.tfvars.example terraform.tfvars
@@ -46,10 +53,12 @@ cp terraform.tfvars.example terraform.tfvars
 Example:
 
 ```hcl
-proof_fqdn      = "proof.example.com"
-route53_zone_id = "Z0123456789ABCDEFG"
-repo_url        = "https://github.com/stutxo/choracle.git"
-repo_ref        = "<commit-sha>"
+proof_fqdn            = "proof.example.com"
+eif_path              = "../build/choracle.eif"
+release_manifest_path = "../build/release-manifest.json"
+gvproxy_path          = "../build/gvproxy"
+runtime_config_path   = "../build/choracle-runtime-config"
+route53_zone_id       = "Z0123456789ABCDEFG"
 ```
 
 ## Deploy
@@ -59,13 +68,15 @@ terraform init
 terraform apply
 ```
 
-The first boot can take several minutes because the instance installs Nix,
-builds `gvproxy`, builds the enclave image, and creates the EIF.
+Terraform uploads the local artifacts to a private encrypted S3 bucket. First
+boot downloads and verifies those artifacts, then starts the parent services.
 
 ## Outputs
 
 ```sh
 terraform output -raw proof_url
+terraform output -raw artifact_bucket
+terraform output -raw artifact_release_id
 terraform output -raw parent_public_ip
 terraform output -raw parent_instance_id
 terraform output -raw ssm_session_command
@@ -110,7 +121,7 @@ Proof endpoint:
 
 ```sh
 curl -sS --fail \
-  "$(terraform output -raw proof_url)/proof/v1/products/BTC-USD/candles?start=1713718800&end=1713719100&granularity=FIVE_MINUTE&limit=1" \
+  "$(terraform output -raw proof_url)/proof/v1/products/BTC-USD/candles?start=1713718800&end=1713718800&granularity=FIVE_MINUTE&limit=1" \
   -o proof.json
 ```
 
@@ -141,7 +152,6 @@ Services on the parent:
 
 ```sh
 systemctl status gvproxy.service
-systemctl status choracle-build-eif.service
 systemctl status choracle-expose-nitriding.service
 systemctl status choracle-fqdn-config.service
 systemctl status choracle-enclave.service

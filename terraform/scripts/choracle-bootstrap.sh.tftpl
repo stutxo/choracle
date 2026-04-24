@@ -3,45 +3,46 @@ set -euxo pipefail
 exec > >(tee /var/log/choracle-bootstrap.log | logger -t choracle-bootstrap -s 2>/dev/console) 2>&1
 
 AWS_DEFAULT_REGION='${region}'
+ARTIFACT_BUCKET='${artifact_bucket}'
+EIF_KEY='${eif_key}'
+EIF_SHA256='${eif_sha256}'
 ENCLAVE_CPU_COUNT='${enclave_cpu_count}'
 ENCLAVE_MEMORY_MIB='${enclave_memory_mib}'
 ENCLAVE_NAME='${enclave_name}'
-GVPROXY_REF='${gvproxy_ref}'
-IMAGE_TAG='${name}-enclave:reproducible'
-PROJECT_DIR='/opt/choracle/src'
-BUILD_DIR='/opt/choracle/build'
+GVPROXY_KEY='${gvproxy_key}'
+GVPROXY_SHA256='${gvproxy_sha256}'
 PROOF_FQDN='${proof_fqdn}'
-REPO_REF='${repo_ref}'
-REPO_URL='${repo_url}'
+RELEASE_MANIFEST_KEY='${release_manifest_key}'
+RELEASE_MANIFEST_SHA256='${release_manifest_sha256}'
+RUNTIME_CONFIG_KEY='${runtime_config_key}'
+RUNTIME_CONFIG_SHA256='${runtime_config_sha256}'
+
+BUILD_DIR='/opt/choracle/build'
 FQDN_CONFIG_PORT='11001'
 
 export AWS_DEFAULT_REGION
-export GOCACHE=/root/.cache/go-build
-export GOMODCACHE=/root/go/pkg/mod
 export HOME=/root
 
 dnf update -y
 dnf install -y \
   aws-nitro-enclaves-cli \
-  aws-nitro-enclaves-cli-devel \
   ca-certificates \
   curl-minimal \
-  docker \
-  git \
-  golang \
   iproute \
   jq \
-  make \
   xz
+
+if ! command -v aws >/dev/null 2>&1; then
+  dnf install -y awscli-2 || dnf install -y awscli
+fi
 
 for user in ec2-user ssm-user; do
   id "$user" >/dev/null 2>&1 || continue
   usermod -aG ne "$user" || true
-  usermod -aG docker "$user" || true
 done
+id choracle >/dev/null 2>&1 || useradd --system --no-create-home --shell /sbin/nologin choracle
 
-mkdir -p "$BUILD_DIR" /opt/gvproxy /run/choracle
-mkdir -p "$GOCACHE" "$GOMODCACHE"
+mkdir -p "$BUILD_DIR" /etc/choracle /run/choracle
 
 cat >/etc/nitro_enclaves/allocator.yaml <<EOF
 ---
@@ -50,84 +51,32 @@ memory_mib: $ENCLAVE_MEMORY_MIB
 cpu_count: $ENCLAVE_CPU_COUNT
 EOF
 
-systemctl enable --now docker
 systemctl enable --now nitro-enclaves-allocator.service
 
-if ! command -v nix >/dev/null 2>&1; then
-  curl --silent --show-error --location https://nixos.org/nix/install -o /tmp/nix-install.sh
-  HOME=/root sh /tmp/nix-install.sh --daemon --yes
-fi
+download_artifact() {
+  local key="$1"
+  local sha256="$2"
+  local dest="$3"
 
-if [ -f /nix/var/nix/profiles/default/etc/profile.d/nix-daemon.sh ]; then
-  # shellcheck disable=SC1091
-  . /nix/var/nix/profiles/default/etc/profile.d/nix-daemon.sh
-elif [ -f /root/.nix-profile/etc/profile.d/nix.sh ]; then
-  # shellcheck disable=SC1091
-  . /root/.nix-profile/etc/profile.d/nix.sh
-fi
+  aws s3 cp "s3://$ARTIFACT_BUCKET/$key" "$dest"
+  printf '%s  %s\n' "$sha256" "$dest" | sha256sum -c -
+}
 
-mkdir -p /root/.config/nix /etc/choracle
-cat >/root/.config/nix/nix.conf <<'EOF'
-experimental-features = nix-command flakes
-EOF
+download_artifact "$EIF_KEY" "$EIF_SHA256" "$BUILD_DIR/choracle.eif"
+download_artifact "$RELEASE_MANIFEST_KEY" "$RELEASE_MANIFEST_SHA256" "$BUILD_DIR/release-manifest.json"
+download_artifact "$GVPROXY_KEY" "$GVPROXY_SHA256" "$BUILD_DIR/gvproxy"
+download_artifact "$RUNTIME_CONFIG_KEY" "$RUNTIME_CONFIG_SHA256" "$BUILD_DIR/choracle-runtime-config"
 
-if [ ! -x /usr/local/bin/gvproxy ]; then
-  rm -rf /opt/gvproxy/gvisor-tap-vsock
-  git clone --depth 1 --branch "$GVPROXY_REF" https://github.com/containers/gvisor-tap-vsock.git /opt/gvproxy/gvisor-tap-vsock
-  (cd /opt/gvproxy/gvisor-tap-vsock && go build -o /usr/local/bin/gvproxy ./cmd/gvproxy)
-fi
+install -m 0755 "$BUILD_DIR/gvproxy" /usr/local/bin/gvproxy
+install -m 0755 "$BUILD_DIR/choracle-runtime-config" /usr/local/bin/choracle-runtime-config
+cp "$BUILD_DIR/choracle.eif" "$BUILD_DIR/auth-price.eif"
+jq -r '.measurements | to_entries[] | "\(.key)=\(.value)"' \
+  "$BUILD_DIR/release-manifest.json" \
+  > "$BUILD_DIR/auth-price.pcrs.txt"
 
-cat >/usr/local/bin/choracle-build-eif.sh <<'EOF'
-#!/bin/bash
-set -euxo pipefail
-
-BUILD_DIR='/opt/choracle/build'
-EIF_PATH="$BUILD_DIR/auth-price.eif"
-IMAGE_TAG='${name}-enclave:reproducible'
-PROJECT_DIR='/opt/choracle/src'
-REPO_REF='${repo_ref}'
-REPO_URL='${repo_url}'
-
-export HOME=/root
-export NITRO_CLI_ARTIFACTS=/root
-export NITRO_CLI_BLOBS=/usr/share/nitro_enclaves/blobs
-
-mkdir -p "$BUILD_DIR"
-
-if [ ! -d "$PROJECT_DIR/.git" ]; then
-  rm -rf "$PROJECT_DIR"
-  git clone "$REPO_URL" "$PROJECT_DIR"
-fi
-
-git -C "$PROJECT_DIR" fetch --all --tags
-if git -C "$PROJECT_DIR" rev-parse --verify --quiet "origin/$REPO_REF" >/dev/null; then
-  git -C "$PROJECT_DIR" checkout -B "$REPO_REF" "origin/$REPO_REF"
-else
-  git -C "$PROJECT_DIR" checkout --detach "$REPO_REF"
-fi
-
-if [ -f /nix/var/nix/profiles/default/etc/profile.d/nix-daemon.sh ]; then
-  # shellcheck disable=SC1091
-  . /nix/var/nix/profiles/default/etc/profile.d/nix-daemon.sh
-elif [ -f /root/.nix-profile/etc/profile.d/nix.sh ]; then
-  # shellcheck disable=SC1091
-  . /root/.nix-profile/etc/profile.d/nix.sh
-fi
-
-BUILD_DIR="$BUILD_DIR" \
-EIF_PATH="$EIF_PATH" \
-IMAGE_TAG="$IMAGE_TAG" \
-PROJECT_DIR="$PROJECT_DIR" \
-  "$PROJECT_DIR/deploy/build-reproducible-eif.sh"
-
-cp "$BUILD_DIR/measurements.log" "$BUILD_DIR/auth-price.measurements.log"
-cp "$BUILD_DIR/measurements.json" "$BUILD_DIR/auth-price.measurements.json"
-cp "$BUILD_DIR/choracle.pcrs.txt" "$BUILD_DIR/auth-price.pcrs.txt"
-
-test -s "$EIF_PATH"
+test -s "$BUILD_DIR/auth-price.eif"
+test -s "$BUILD_DIR/release-manifest.json"
 test -s "$BUILD_DIR/auth-price.pcrs.txt"
-EOF
-chmod 0755 /usr/local/bin/choracle-build-eif.sh
 
 cat >/etc/choracle/runtime-config.env <<EOF
 PROOF_FQDN=$PROOF_FQDN
@@ -162,7 +111,6 @@ expose_port() {
   ss -ltnp | grep -q ":$port .*gvproxy"
 }
 
-expose_port 80
 expose_port 443
 EOF
 chmod 0755 /usr/local/bin/choracle-expose-nitriding.sh
@@ -216,23 +164,11 @@ RuntimeDirectory=choracle
 ExecStart=/usr/local/bin/gvproxy -listen vsock://:1024 -listen unix:///run/choracle/network.sock
 Restart=always
 RestartSec=2
-
-[Install]
-WantedBy=multi-user.target
-EOF
-
-cat >/etc/systemd/system/choracle-build-eif.service <<'EOF'
-[Unit]
-Description=Build Choracle enclave Docker image and EIF
-After=docker.service network-online.target
-Requires=docker.service
-Wants=network-online.target
-
-[Service]
-Type=oneshot
-ExecStart=/usr/local/bin/choracle-build-eif.sh
-RemainAfterExit=yes
-TimeoutStartSec=3600
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+ReadWritePaths=/run/choracle
 
 [Install]
 WantedBy=multi-user.target
@@ -240,7 +176,7 @@ EOF
 
 cat >/etc/systemd/system/choracle-expose-nitriding.service <<'EOF'
 [Unit]
-Description=Expose parent ACME and HTTPS ports to nitriding over gvproxy
+Description=Expose parent HTTPS port to nitriding over gvproxy
 After=gvproxy.service
 Requires=gvproxy.service
 
@@ -248,6 +184,10 @@ Requires=gvproxy.service
 Type=oneshot
 ExecStart=/usr/local/bin/choracle-expose-nitriding.sh
 RemainAfterExit=yes
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
 
 [Install]
 WantedBy=multi-user.target
@@ -256,15 +196,21 @@ EOF
 cat >/etc/systemd/system/choracle-fqdn-config.service <<'EOF'
 [Unit]
 Description=Serve Choracle runtime FQDN config over vsock
-After=choracle-build-eif.service
-Requires=choracle-build-eif.service
+After=network-online.target
+Wants=network-online.target
 
 [Service]
 Type=simple
+User=choracle
+Group=choracle
 EnvironmentFile=/etc/choracle/runtime-config.env
 ExecStart=/usr/local/bin/choracle-runtime-config serve-fqdn --fqdn $${PROOF_FQDN} --port $${CHORACLE_FQDN_CONFIG_PORT}
 Restart=always
 RestartSec=2
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
 
 [Install]
 WantedBy=multi-user.target
@@ -273,8 +219,8 @@ EOF
 cat >/etc/systemd/system/choracle-enclave.service <<'EOF'
 [Unit]
 Description=Run Choracle Nitro Enclave proof service
-After=nitro-enclaves-allocator.service docker.service choracle-build-eif.service gvproxy.service choracle-expose-nitriding.service choracle-fqdn-config.service
-Requires=nitro-enclaves-allocator.service docker.service choracle-build-eif.service gvproxy.service choracle-expose-nitriding.service choracle-fqdn-config.service
+After=nitro-enclaves-allocator.service gvproxy.service choracle-expose-nitriding.service choracle-fqdn-config.service
+Requires=nitro-enclaves-allocator.service gvproxy.service choracle-expose-nitriding.service choracle-fqdn-config.service
 
 [Service]
 Type=simple
@@ -282,15 +228,19 @@ ExecStart=/usr/local/bin/choracle-run-enclave.sh
 Restart=always
 RestartSec=5
 TimeoutStartSec=300
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+ReadWritePaths=/opt/choracle/build /run /var/log
 
 [Install]
 WantedBy=multi-user.target
 EOF
 
 systemctl daemon-reload
-systemctl enable gvproxy.service choracle-build-eif.service choracle-expose-nitriding.service choracle-fqdn-config.service choracle-enclave.service
+systemctl enable gvproxy.service choracle-expose-nitriding.service choracle-fqdn-config.service choracle-enclave.service
 systemctl start gvproxy.service
-systemctl start choracle-build-eif.service
 systemctl start choracle-expose-nitriding.service
 systemctl start choracle-fqdn-config.service
 systemctl start choracle-enclave.service

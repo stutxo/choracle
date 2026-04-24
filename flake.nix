@@ -87,35 +87,9 @@
             # and replace this fake hash with the hash Nix reports.
             vendorHash = "sha256-cVlPSXcn44X3Lusq1gmlPY+b0k8Vd1uKZVIwxYQbMgM=";
 
-            postPatch = ''
-              awk '{ print } index($0, "e.extPubSrv.TLSConfig = certManager.TLSConfig()") { print "    e.extPrivSrv.TLSConfig = e.extPubSrv.TLSConfig.Clone()" }' enclave.go > enclave.go.new
-              mv enclave.go.new enclave.go
-              awk 'seen && /e.extPrivSrv.TLSConfig = e.extPubSrv.TLSConfig.Clone()/ { ok = 1 } /e.extPubSrv.TLSConfig = certManager.TLSConfig\(\)/ { seen = 1 } END { exit ok ? 0 : 1 }' enclave.go
-              awk '{ print } index($0, "e.extPubSrv.TLSConfig = certManager.TLSConfig()") { print "    go func() {"; print "        srv := &http.Server{"; print "            Addr: \":80\","; print "            Handler: certManager.HTTPHandler(nil),"; print "        }"; print "        elog.Printf(\"Starting ACME HTTP-01 Web server at :80.\")"; print "        if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {"; print "            elog.Printf(\"ACME HTTP-01 Web server error: %v\", err)"; print "        }"; print "    }()" }' enclave.go > enclave.go.new
-              mv enclave.go.new enclave.go
-              awk 'seen && /Starting ACME HTTP-01 Web server at :80/ { ok = 1 } /e.extPubSrv.TLSConfig = certManager.TLSConfig\(\)/ { seen = 1 } END { exit ok ? 0 : 1 }' enclave.go
-            '';
-
             subPackages = [ "." ];
             preBuild = ''
               export CGO_ENABLED=0
-              autocert_path="vendor/golang.org/x/crypto/acme/autocert/autocert.go"
-              test -f "$autocert_path"
-              chmod -R u+w "$(dirname "$autocert_path")"
-              awk '
-                /typ := \[\]string\{"tls-alpn-01"\}/ {
-                  print "\tif m.tryHTTP01 {"
-                  print "\t\treturn []string{\"http-01\"}"
-                  print "\t}"
-                  print "\treturn []string{\"tls-alpn-01\"}"
-                  skip = 4
-                  next
-                }
-                skip > 0 { skip--; next }
-                { print }
-              ' "$autocert_path" > "$autocert_path.new"
-              mv "$autocert_path.new" "$autocert_path"
-              grep -q 'return \[\]string{"http-01"}' "$autocert_path"
             '';
             GOFLAGS = [
               "-buildvcs=false"

@@ -1,62 +1,33 @@
-# Manual Nitriding Deployment
+# Release Artifact Build
 
-The supported automated deployment is in `terraform/`. This directory contains
-the lower-level commands used by that deployment.
+The supported deployment path is in `terraform/`. This directory contains the
+release artifact builder consumed by that Terraform deployment.
 
-## Build Enclave Image
+## Build Artifacts
 
-The canonical release build is Nix-based. The proof FQDN is runtime config from
-the parent instance and is not baked into the EIF.
+Run this on a Nitro-capable ARM64 Linux builder with Nix, Docker, Nitro CLI,
+Git, and Go installed:
 
 ```sh
 BUILD_DIR=/tmp/choracle-build \
   deploy/build-reproducible-eif.sh
 ```
 
-Record PCR0, PCR1, and PCR2 from `release-manifest.json` or
-`measurements.json`.
+The script writes:
 
-The older `Dockerfile.enclave` path is retained for development only. It uses
-mutable distro/package inputs and should not be used for published PCRs.
+- `choracle-enclave-image.tar`
+- `choracle.eif`
+- `measurements.json`
+- `choracle.pcrs.txt`
+- `release-manifest.json`
+- `gvproxy`
+- `choracle-runtime-config`
 
-## Start Parent Networking
+`choracle.eif`, `release-manifest.json`, `gvproxy`, and
+`choracle-runtime-config` are passed to Terraform as local artifact paths.
 
-Run `gvproxy`:
+## Notes
 
-```sh
-bash deploy/start-gvproxy.sh
-```
-
-Expose parent port 443 to nitriding's static TAP address:
-
-```sh
-bash deploy/expose-nitriding.sh
-```
-
-## Run Enclave
-
-The enclave expects a parent-side FQDN config server on vsock port `11001`:
-
-```sh
-choracle-runtime-config serve-fqdn --fqdn proof.example.com --port 11001
-```
-
-```sh
-nitro-cli run-enclave \
-  --enclave-name choracle-proof \
-  --cpu-count 2 \
-  --memory 1024 \
-  --eif-path choracle.eif
-```
-
-## Test
-
-```sh
-curl "https://proof.example.com/proof/v1/products/BTC-USD/candles?start=1713718800&end=1713719100&granularity=FIVE_MINUTE&limit=1"
-```
-
-Nitriding's attestation endpoint remains available:
-
-```text
-GET /enclave/attestation?nonce=<40 hex chars>
-```
+The public proof FQDN is runtime config from the parent instance and is not
+baked into the EIF. PCR0, PCR1, and PCR2 must come from `release-manifest.json`,
+`measurements.json`, or `choracle.pcrs.txt`; do not derive them by inspection.

@@ -1,11 +1,12 @@
 proof_fqdn = "proof.example.com"
 
+eif_path              = "../build/choracle.eif"
+release_manifest_path = "../build/release-manifest.json"
+gvproxy_path          = "../build/gvproxy"
+runtime_config_path   = "../build/choracle-runtime-config"
+
 # Optional: let Terraform create proof_fqdn in Route53.
 route53_zone_id = "Z0123456789ABCDEFG"
 
 # Optional hardening once you know the client IP range.
 # allowed_https_cidr = "0.0.0.0/0"
-
-# The EC2 bootstrap clones this public repo/ref.
-repo_url = "https://github.com/stutxo/choracle.git"
-repo_ref = "<commit-sha>"

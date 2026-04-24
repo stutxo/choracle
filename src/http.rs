@@ -7,7 +7,7 @@ use std::sync::Arc;
 
 use crate::crypto::b64_encode;
 use crate::proof::TlsInfo;
-use crate::{GRANULARITY_LABEL, HOST, REQUEST_PATH};
+use crate::{GRANULARITY_LABEL, GRANULARITY_SECONDS, HOST, REQUEST_PATH};
 
 #[derive(Debug, Clone)]
 pub struct HttpFetchResult {
@@ -27,6 +27,12 @@ pub fn coinbase_candle_query(start: i64, end: i64) -> Result<String> {
     }
     if start > end {
         return Err(anyhow!("start must be less than or equal to end"));
+    }
+    if start != end {
+        return Err(anyhow!("start and end must both equal the candle start"));
+    }
+    if start % GRANULARITY_SECONDS != 0 {
+        return Err(anyhow!("start must be 5-minute aligned"));
     }
     Ok(format!(
         "start={start}&end={end}&granularity={GRANULARITY_LABEL}&limit=1"
@@ -228,10 +234,10 @@ mod tests {
 
     #[test]
     fn builds_expected_query_shape() {
-        let query = coinbase_candle_query(1776717600, 1776717900).unwrap();
+        let query = coinbase_candle_query(1776717600, 1776717600).unwrap();
         assert_eq!(
             query,
-            "start=1776717600&end=1776717900&granularity=FIVE_MINUTE&limit=1"
+            "start=1776717600&end=1776717600&granularity=FIVE_MINUTE&limit=1"
         );
     }
 

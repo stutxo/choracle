@@ -431,14 +431,14 @@ mod tests {
     fn parses_valid_public_proof_request() {
         let request = parse_public_proof_request(
             "GET",
-            "/proof/v1/products/BTC-USD/candles?start=1713718800&end=1713719100&granularity=FIVE_MINUTE&limit=1",
+            "/proof/v1/products/BTC-USD/candles?start=1713718800&end=1713718800&granularity=FIVE_MINUTE&limit=1",
         )
         .unwrap();
         assert_eq!(
             request,
             ProofRequest {
                 start: 1713718800,
-                end: 1713719100
+                end: 1713718800
             }
         );
     }
@@ -468,6 +468,16 @@ mod tests {
         let err = parse_public_proof_request(
             "GET",
             "/proof/v1/products/BTC-USD/candles?end=1&granularity=FIVE_MINUTE&limit=1",
+        )
+        .unwrap_err();
+        assert_eq!(err.status, 400);
+    }
+
+    #[test]
+    fn rejects_wide_request_range() {
+        let err = parse_public_proof_request(
+            "GET",
+            "/proof/v1/products/BTC-USD/candles?start=1713718800&end=1713719100&granularity=FIVE_MINUTE&limit=1",
         )
         .unwrap_err();
         assert_eq!(err.status, 400);
